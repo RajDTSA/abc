@@ -1,0 +1,187 @@
+---
+title: "Covid-19 data analysis"
+author: "Raj S."
+date: "2023-05-12"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Covid-19 Data Analysis
+
+```{r code_1}
+#Loading the tidyverse library
+library(tidyverse)
+```
+
+```{r code_2}
+# Get the current data in all the four files 
+url_in <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/"
+file_names <- c("time_series_covid19_confirmed_global.csv",
+                "time_series_covid19_deaths_global.csv",
+                "time_series_covid19_confirmed_US.csv",
+                "time_series_covid19_deaths_US.csv")
+urls <- str_c(url_in,file_names)
+```
+
+## Reading into the data and reviewing it.
+
+```{r import_data, message = FALSE}
+global_cases <- read_csv(urls[1])
+global_deaths <- read_csv(urls[2])
+US_cases <- read_csv(urls[3])
+US_deaths <- read_csv(urls[4])
+
+global_cases
+```
+
+## Now on reviewing the global cases data, we can see that we do not the Lay and Log data, while at the same time we need the dates to in each row rather than each column.
+
+```{r tidy_global_data}
+global_cases <- global_cases %>% 
+  pivot_longer(cols = -c(`Province/State`, `Country/Region`, Lat, Long), names_to = "date", values_to = "cases" ) %>%
+  select(-c(Lat, Long))
+
+global_cases
+```
+
+## Now lets review the global_deaths data
+
+```{r global_deaths}
+global_deaths
+```
+
+## global_deaths has the same format of data in terms of columns as global_cases and thus we will perform similar operation on it, as we did on the global_deaths data
+
+```{r tidy_global_data_2}
+global_deaths <- global_deaths %>% 
+  pivot_longer(cols = -c(`Province/State`, `Country/Region`, Lat, Long), names_to = "date", values_to = "deaths" ) %>%
+  select(-c(Lat, Long))
+
+global_deaths
+```
+
+## We will be now joining both the datasets - global_cases & global_deaths into a single data frame and also covert the date from character object to date object.
+
+```{r, global}
+library(lubridate)
+global <- global_cases %>% 
+  full_join(global_deaths) %>%
+  rename(Country_Region = 'Country/Region',
+         Province_State = 'Province/State') %>% 
+    mutate(date = mdy(date))
+  
+global
+summary(global)
+```
+
+## Now there are rows where the number of cases are zero and thus it has no value to us for type of analysis at this point.
+
+```{r code_7}
+global %>% filter(cases>0)
+summary(global)
+```
+
+## Now lets check the validity of data specifically in terms of number of cases and confirm that the given number is not a typo.
+
+```{r code_8}
+global %>% filter(cases>100000000)
+```
+
+## Thus, we can confirm that the number of cases data is valid and correct.
+
+## Now we will be only focusing on the Global data to do our analysis.
+
+## We will try answering couple of questions through our analaysis -
+
+## 1. Visualisation 1 - Which country has the most number of cases and deaths ?
+
+## 2. Visualisation \# 2. What was the trend in the number of cases with respect to date in the country with the maximum number of cases and deaths?
+
+## 3. Model - Fit a linear model with the deaths as the response variable and cases and country as predictors
+
+```{r code_9}
+library(dplyr)
+library(scales)
+total_cases <- global %>%
+  group_by(Country_Region) %>% 
+  summarize(total_cases = sum(cases))
+
+#Lets plot the graph of No. of cases vs Country 
+
+ggplot(total_cases, aes(x = Country_Region, y = total_cases)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(x = "Country", y = "Cases", title = "Total COVID-19 Cases by Country") +
+  scale_y_continuous(labels = comma) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 1)) +
+   theme(axis.text.x = element_text(size = 1))
+```
+
+```{r code_10}
+
+# It can be seen that United States of America has the most number of cases - lets verify it : 
+
+
+total_cases$Country_Region[which.max(total_cases$total_cases)]
+
+```
+
+```{r code_11}
+
+total_deaths <- global %>%
+  group_by(Country_Region) %>% 
+  summarize(total_deaths = sum(deaths))
+
+#Lets plot the graph of No. of deaths vs Country 
+
+ggplot(total_deaths, aes(x = Country_Region, y = total_deaths)) +
+  geom_bar(stat = "identity", fill = "red") +
+  labs(x = "Country", y = "Deaths", title = "Total COVID-19 Deaths by Country") +
+  scale_y_continuous(labels = comma) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 1)) +
+  theme(axis.text.x = element_text(size = 1))
+
+
+#Verifying the country with maximum number of deaths
+total_deaths$Country_Region[which.max(total_deaths$total_deaths)]
+
+```
+
+## Observation - Thus, from the above two visiualisations it can be seen that United States of America has the maximum number of cases as well as deaths.
+
+## Now as US is the country with both maximum number of cases as well as deaths, we will see what was the trend with respect to date ?
+
+```{r code_12}
+us_data <- filter(global, Country_Region == "US" )
+
+ggplot(us_data, aes(x = date)) +
+  geom_line(aes(y = cases, color = "Cases")) +
+  geom_line(aes(y = deaths, color = "Deaths")) +
+  labs(x = "Date", y = "Count", title = "COVID-19 Cases and Deaths in the US") +
+  scale_color_manual(values = c("Cases" = "steelblue", "Deaths" = "red")) +
+  scale_y_continuous(labels = comma) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+
+## Observation - It can be seen that all through the year 2020-2023 the number of cases in the US kept increasing, however, the deaths stayed more or less the same.
+
+## Now, let us try fitting in a model between number of deaths and number of cases
+
+```{r code_13}
+model <- lm(deaths ~ cases, data = us_data)
+summary(model)
+
+ggplot(us_data, aes(x = cases, y = deaths)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "red") +
+  scale_x_continuous(labels = comma) + 
+  labs(x = "Cases", y = "Deaths", title = "Scatter Plot with Linear Regression Line")
+
+```
+
+## There is much valuable information that can be garnered from the last visualization and the model. The number of cases might have stayed constant through the pandemic even though the number of cases kept increasing indicating the there were some monumental efforts put in to keep countering the Covid19 pandemic. Furthermore, there is linear relationship between deaths and cases and the value of R-sqaured is 0.9548 it can be said that its very well fitting model. Furthermore, as the cases increases the number of deaths also increases which is natural.
