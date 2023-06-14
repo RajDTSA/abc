@@ -1,0 +1,191 @@
+---
+title: "NYPD Shooting"
+author: "Raj S."
+date: "2023-05-12"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Accessing the data from the internet
+
+```{r}
+library(tidyverse)
+library(dplyr)
+url_in <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+nypd <- read_csv((url_in))
+nypd
+```
+
+## We wont be needing certain columns for our analysis and thus we will be removing those columns from the data. We will also remove Perpetrator race columnn to avoid bias against certain set of individuals.
+
+```{r}
+nypd_1 <- nypd %>% select (-INCIDENT_KEY, -JURISDICTION_CODE, -PERP_RACE, -X_COORD_CD, -Y_COORD_CD, -Latitude, -Longitude, -Lon_Lat )
+nypd_1
+```
+
+## We will also change the data from character object to date object.
+
+```{r}
+nypd_1$OCCUR_DATE <- as.Date(nypd_1$OCCUR_DATE, format = "%m/%d/%Y")
+```
+
+## Due to nature of the data we will fill-in all the empty columns with "unknown".
+
+```{r}
+nypd_1 <- nypd_1 %>%
+  mutate_if(is.character, ~if_else(is.na(.), "unknown", .))
+summary(nypd_1)
+```
+
+## Explaining the data
+
+## We have now multiple columns here but we will be primarily interested in understanding the survival rates in different boroughs of New York on being shot. For that we will need the column - BORO and STATISTICAL_MURDER_FLAG
+
+## Let us try answering certain questions from our data
+
+## Question - What is the probability of survival of shot in any of the boroughs of New york purely on the basis of given data as we haven't been given the population ?
+
+```{r}
+# Calculating the shooting in each borough
+shootings_by_boroughs <- nypd_1 %>% 
+  group_by(BORO) %>% summarise(total_shootings = n())
+shootings_by_boroughs
+
+# Calculating the total number of shootings in all of New york
+total_shootings = sum(shootings_by_boroughs$total_shootings)
+total_shootings
+
+# Calculating the probability of getting shot in each area 
+
+shootings_by_boroughs <- shootings_by_boroughs %>%
+  mutate(probability = total_shootings/sum(total_shootings))
+
+# plotting the probabilities on a graph 
+
+ggplot(shootings_by_boroughs, aes (x = BORO, y = probability)) +
+  geom_bar(stat = "identity", fill = "red") +
+  labs(title = "Probability of getting shot in each borough", x = "Borough", y = "Probability" ) 
+```
+
+## Question - Now let's see What is the probability of being shot in any of the boroughs of New york on the basis of the population data that I have taken from Wikipedia which showcases population according to the 2020 census ?
+
+I am adding the links of the Wikipedia pages from where I have taken the population numbers :
+
+Bronx = <https://en.wikipedia.org/wiki/The_Bronx>\
+Brooklyn = <https://en.wikipedia.org/wiki/Brooklyn>\
+Manhattan = <https://en.wikipedia.org/wiki/Manhattan>\
+Queens = <https://en.wikipedia.org/wiki/Queens>\
+Staten Island = <https://en.wikipedia.org/wiki/Staten_Island>
+
+```{r}
+nypd_1 <- nypd_1 %>%
+ mutate(Population = case_when(
+    BORO == "BRONX" ~ 1472654,
+    BORO == "BROOKLYN" ~ 2736074,
+    BORO == "MANHATTAN" ~ 1694251,
+    BORO == "QUEENS" ~ 2405464,
+    BORO == "STATEN ISLAND" ~ 495747,
+    TRUE ~ NA_real_
+  ))
+nypd_1
+```
+
+## Now that we have population for each borough what are the number of shootings/person in each of the borough ?
+
+```{r}
+
+nypd_shot_per_person <- nypd_1 %>%
+  group_by(BORO) %>%
+  summarise(total_shootings = n(),
+            total_population = unique(Population),
+            shooting_per_person = total_shootings / total_population)
+
+# Plot the probabilities
+ggplot(nypd_shot_per_person, aes(x = BORO, y = shooting_per_person)) +
+  geom_bar(stat = "identity", fill = "yellow", color = "red") +
+  xlab("Borough") +
+  ylab("Shoting per person") +
+  ggtitle("Shootings per Person by Borough") +
+  theme_light()
+```
+
+## It can be seen that Bronx is the place where probability of being shot is maximum
+
+## Lets try answering the following question - What are the chances of survival if someone gets shot in each of the areas ?
+
+Step 1 - In the STATISTICAL_MURDER_FLAG column TRUE means "the person died" while FALSE means "the person survived" after being shot. We will convert the TRUE = 0 and FALSE = 1 to count the number of survivals.
+
+```{r}
+nypd_1$STATISTICAL_MURDER_FLAG <- ifelse(nypd_1$STATISTICAL_MURDER_FLAG == TRUE, 0, 1)
+```
+
+## Calculate the survival probability and plot it on a graph
+
+```{r}
+survivals <- select(nypd_1, BORO, STATISTICAL_MURDER_FLAG)
+survivals
+survival_probability <- survivals %>% 
+  group_by(BORO) %>% 
+  summarize(probability_survival = sum(STATISTICAL_MURDER_FLAG == FALSE) / n())
+survival_probability
+
+
+ggplot(survival_probability, aes(x = BORO, y = probability_survival)) +
+  geom_bar(stat = "identity", fill = "blue", color = "black") +
+  xlab("Borough") +
+  ylab("Probability of Survival") +
+  ggtitle("Probability of Survival by Borough") + theme_classic()
+```
+
+## An important thing to note here is that whether we consider purely the given data or we take into cosideration the population, the answer to maximum probability of being shot can change between Bronx and Brooklyn but the chances of survival is pretty similar in both the boroughs (given the data).
+
+## Now we can try fit a linear regression model given the population and people survived after being shot in each area.
+
+```{r}
+nypd_pop_survival <- nypd_1 %>%
+  group_by(BORO) %>%
+  summarize(survived = sum(STATISTICAL_MURDER_FLAG == 1),
+            Population = first(Population))
+nypd_pop_survival
+
+d <- glm(nypd_pop_survival$survived ~ nypd_pop_survival$Population)
+
+summary(d)
+
+
+ggplot(nypd_pop_survival, aes(x = nypd_pop_survival$Population, y = nypd_pop_survival$survived)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  xlab("Population") +
+  ylab("Survivals") +
+  ggtitle("Linear Regression: Survivals vs Population")
+```
+
+```{r}
+nypd_pop_survival <- nypd_1 %>%
+  group_by(BORO) %>%
+  summarize(survived = cumsum(STATISTICAL_MURDER_FLAG == 1),
+            Population = first(Population))
+summary(nypd_pop_survival)
+
+d <- glm(nypd_pop_survival$survived ~ nypd_pop_survival$Population)
+
+summary(d)
+
+
+
+
+ggplot(nypd_pop_survival, aes(x = nypd_pop_survival$Population, y = nypd_pop_survival$survived)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  xlab("Population") +
+  ylab("Survivals") +
+  ggtitle("Linear Regression: Survivals vs Population")
+```
+
+## It can be seen that as the population increases the survivals after being shot also increases and thus they have a positive correlation but it can be also on account of better medical facilities in areas with higher population and/or better response times in certain areas
